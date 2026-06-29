@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arts Fest Live Auction Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Confetti particle canvas -->
+  <canvas id="confetti-canvas" class="confetti-canvas"></canvas>
+
+  <div class="dashboard-container">
+    
+    <!-- Top Header Bar -->
+    <header class="app-header">
+      <div class="brand">
+        <h1 class="brand-logo">AUCTION</h1>
+        <span class="fest-badge">Arts Fest Live</span>
+      </div>
+      
+      <div class="header-actions">
+        <!-- Live Connection Status -->
+        <div id="status-indicator" class="status-indicator">
+          <span id="status-dot" class="status-dot local"></span>
+          <span id="status-text">Local Mode</span>
+        </div>
+        
+        <!-- Action Buttons -->
+        <button id="btn-sync" class="btn" title="Sync with Google Sheets">
+          🔄 Sync
+        </button>
+        <button id="btn-undo" class="btn btn-danger" title="Undo the most recent selection">
+          ↩ Undo Pick
+        </button>
+        <button id="btn-finish-class" class="btn btn-primary" title="Finish current class and load next">
+          ⏭ Finish Class
+        </button>
+        <button id="btn-settings" class="btn btn-icon-only" title="Open Dashboard Settings">
+          ⚙️
+        </button>
+      </div>
+    </header>
+
+    <!-- Sidebar (Left Column): Navigation & Queue -->
+    <aside class="sidebar">
+      <!-- Categories Panel -->
+      <section class="panel-card">
+        <h2 class="panel-title">Categories</h2>
+        <div id="category-list" class="category-list">
+          <!-- Populated by JavaScript -->
+        </div>
+      </section>
+
+      <!-- Classes Panel -->
+      <section class="panel-card">
+        <h2 class="panel-title">Classes</h2>
+        <div id="class-grid" class="class-grid">
+          <!-- Populated by JavaScript -->
+        </div>
+      </section>
+
+      <!-- Turn Queue Banner -->
+      <section class="panel-card" style="flex: 1;">
+        <h2 class="panel-title">Draft Turn</h2>
+        <div class="draft-queue-box">
+          <div class="queue-label">Current Picker</div>
+          <div id="current-house-banner" class="current-house-banner">
+            <span id="current-house-color-pill" class="house-color-pill"></span>
+            <span id="current-house-name">Loading...</span>
+          </div>
+          
+          <div class="queue-label" style="margin-top: 14px;">Up Next</div>
+          <div id="upcoming-queue" class="upcoming-queue">
+            <!-- Populated by JavaScript -->
+          </div>
+        </div>
+      </section>
+    </aside>
+
+    <!-- Main Display (Center Column): Student Selection Grid -->
+    <main class="main-display">
+      <!-- Active Class Bar -->
+      <div class="class-header-bar">
+        <div class="class-title">
+          <span id="active-class-title">--</span>
+          <span id="active-category-badge" class="class-category-badge">--</span>
+        </div>
+        <div class="grid-controls">
+          <span style="font-size: 0.85rem; color: var(--text-secondary);">Click student to draft</span>
+        </div>
+      </div>
+
+      <!-- Student Cards Container -->
+      <div class="student-grid-wrapper">
+        <ul id="student-grid" class="student-grid">
+          <!-- Populated by JavaScript -->
+        </ul>
+      </div>
+    </main>
+
+    <!-- Houses Panel (Right Column): Selections & Standings -->
+    <aside id="houses-container" class="houses-panel">
+      <!-- Populated by JavaScript -->
+    </aside>
+
+  </div>
+
+  <!-- MODAL: Student Selection Preview -->
+  <div id="student-modal" class="modal-overlay">
+    <div class="modal-content">
+      <button class="close-modal-btn" onclick="closeModal(document.getElementById('student-modal'))">×</button>
+      
+      <div class="student-preview-container">
+        <!-- Photo Frame -->
+        <div class="preview-photo-frame">
+          <img id="preview-photo" class="preview-photo" src="" alt="Student Photo">
+          <div id="preview-photo-fallback" class="preview-photo-fallback">?</div>
+        </div>
+        
+        <!-- Details -->
+        <div class="preview-details">
+          <h2 id="preview-name" class="preview-name">Student Name</h2>
+          <div class="preview-meta-row">
+            <span id="preview-adm" class="meta-badge" style="font-family: monospace;">--</span>
+            <span id="preview-class" class="meta-badge meta-badge-accent">--</span>
+            <span id="preview-category" class="meta-badge">--</span>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Selection Actions -->
+      <div class="modal-action-box">
+        <div class="turn-notification-msg">
+          Drafting student to: <span id="modal-house-target" class="meta-badge meta-badge-accent" style="font-size: 0.95rem; padding: 4px 12px;"><strong id="modal-house-name">House</strong></span>
+        </div>
+        <div class="modal-buttons">
+          <button id="btn-modal-cancel" class="btn">Cancel</button>
+          <button id="btn-modal-confirm" class="btn btn-success">Confirm Selection</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Settings -->
+  <div id="settings-modal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 550px;">
+      <button class="close-modal-btn" id="btn-settings-close">×</button>
+      
+      <h2 class="panel-title" style="margin-bottom: 20px; font-size: 1.4rem;">Auction Settings</h2>
+      
+      <div class="settings-form">
+        <!-- Google Apps Script Link -->
+        <div class="form-group">
+          <label for="settings-api-url">Google Apps Script Web App URL</label>
+          <input type="url" id="settings-api-url" class="form-input" placeholder="https://script.google.com/macros/s/.../exec">
+          <span style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">
+            Input Web App URL to sync data with Google Sheets. Leave blank for manual CSV mode.
+          </span>
+        </div>
+        
+        <!-- House Customization -->
+        <div class="form-group">
+          <label>House Customization (Names & Colors)</label>
+          <div class="house-config-grid">
+            <!-- House 1 -->
+            <div class="house-config-item">
+              <input type="color" id="settings-house-1-color" class="color-input" value="#ef4444">
+              <input type="text" id="settings-house-1-name" class="form-input" value="House 1" style="flex: 1;">
+            </div>
+            <!-- House 2 -->
+            <div class="house-config-item">
+              <input type="color" id="settings-house-2-color" class="color-input" value="#3b82f6">
+              <input type="text" id="settings-house-2-name" class="form-input" value="House 2" style="flex: 1;">
+            </div>
+            <!-- House 3 -->
+            <div class="house-config-item">
+              <input type="color" id="settings-house-3-color" class="color-input" value="#10b981">
+              <input type="text" id="settings-house-3-name" class="form-input" value="House 3" style="flex: 1;">
+            </div>
+            <!-- House 4 -->
+            <div class="house-config-item">
+              <input type="color" id="settings-house-4-color" class="color-input" value="#f59e0b">
+              <input type="text" id="settings-house-4-name" class="form-input" value="House 4" style="flex: 1;">
+            </div>
+          </div>
+        </div>
+        
+        <!-- Local Student CSV Import -->
+        <div class="form-group" style="margin-top: 6px;">
+          <label>Local Student Database Import (CSV)</label>
+          <div class="csv-upload-btn-wrapper">
+            <button class="btn btn-primary" style="width: 100%; justify-content: center;">📂 Select CSV File</button>
+            <input type="file" id="settings-import-csv" accept=".csv">
+          </div>
+          <span style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">
+            Upload CSV with columns: <strong>Admission No</strong>, <strong>Student Name</strong>, <strong>Class</strong>, <strong>Category</strong>, <strong>Photo File ID</strong>.
+          </span>
+        </div>
+        
+        <!-- Actions -->
+        <div class="settings-actions">
+          <button id="btn-settings-save" class="btn btn-success" style="justify-content: center;">Save Configurations</button>
+          
+          <div style="display: grid; grid-template-columns: 1fr; gap: 8px;">
+            <button id="btn-settings-export-picks" class="btn" style="justify-content: center;">📥 Export Picks (CSV)</button>
+            <button id="btn-settings-reset-picks" class="btn btn-danger" style="justify-content: center; background: #ea580c; border: none;">🧹 Clear Selections Only</button>
+            <button id="btn-settings-reset" class="btn btn-danger" style="justify-content: center;">⚠️ Reset Entire Database</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION CONTAINER -->
+  <div id="toast" class="toast-container">
+    <div id="toast-icon">✓</div>
+    <div id="toast-text">Success message</div>
+  </div>
+
+  <!-- App Core JS -->
+  <script src="app.js"></script>
+</body>
+</html>
