@@ -34,6 +34,9 @@
         <button id="btn-undo" class="btn btn-danger" title="Undo the most recent selection">
           ↩ Undo Pick
         </button>
+        <button id="btn-unpicked" class="btn" title="Show Unpicked Students">
+          👥 Unpicked
+        </button>
         <button id="btn-finish-class" class="btn btn-primary" title="Finish current class and load next">
           ⏭ Finish Class
         </button>
@@ -205,11 +208,45 @@
           
           <div style="display: grid; grid-template-columns: 1fr; gap: 8px;">
             <button id="btn-settings-export-picks" class="btn" style="justify-content: center;">📥 Export Picks (CSV)</button>
+            <button id="btn-settings-print-rosters" class="btn" style="justify-content: center;">🖨️ Print House Rosters</button>
             <button id="btn-settings-reset-picks" class="btn btn-danger" style="justify-content: center; background: #ea580c; border: none;">🧹 Clear Selections Only</button>
             <button id="btn-settings-reset" class="btn btn-danger" style="justify-content: center;">⚠️ Reset Entire Database</button>
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Unpicked Students -->
+  <div id="unpicked-modal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 800px; max-height: 85vh; display: flex; flex-direction: column;">
+      <button class="close-modal-btn" onclick="closeModal(document.getElementById('unpicked-modal'))">×</button>
+      <h2 class="panel-title" style="margin-bottom: 20px; font-size: 1.4rem;">Unpicked Students (<span id="unpicked-class-name">--</span>)</h2>
+      <div style="overflow-y: auto; flex: 1; padding-right: 10px;">
+        <ul id="unpicked-grid" class="student-grid" style="grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));">
+          <!-- Populated by JS -->
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Draw (Spinning Wheel) -->
+  <div id="draw-modal" class="modal-overlay" style="z-index: 2000;">
+    <div class="modal-content" style="max-width: 600px; text-align: center;">
+      <h2 class="panel-title" style="font-size: 1.8rem; margin-bottom: 10px;">House Draw</h2>
+      <p style="color: var(--text-secondary); margin-bottom: 20px;">Spin the wheel to determine the base draft order for the next 4 classes.</p>
+      
+      <div style="position: relative; width: 300px; height: 300px; margin: 0 auto 20px auto;">
+        <canvas id="wheel-canvas" width="300" height="300" style="width: 100%; height: 100%;"></canvas>
+        <div id="wheel-pointer" style="position: absolute; top: -10px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 15px solid transparent; border-right: 15px solid transparent; border-top: 25px solid var(--text-primary); z-index: 10;"></div>
+      </div>
+      
+      <div id="draw-results" style="display: flex; justify-content: center; gap: 10px; margin-bottom: 20px; min-height: 40px; flex-wrap: wrap;">
+        <!-- Filled as houses are drawn -->
+      </div>
+      
+      <button id="btn-spin-wheel" class="btn btn-primary" style="margin: 0 auto; padding: 12px 30px; font-size: 1.2rem;">SPIN WHEEL</button>
+      <button id="btn-confirm-draw" class="btn btn-success" style="margin: 0 auto; padding: 12px 30px; font-size: 1.2rem; display: none;">CONFIRM ORDER</button>
     </div>
   </div>
 
