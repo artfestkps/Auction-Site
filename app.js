@@ -52,6 +52,7 @@ let state = {
   activeClass: "D3",     // Name of active class
   apiURL: "https://script.google.com/macros/s/AKfycbyCpEuuJN9GLbT1dbRlsK1Avouauv6h3SYUNOt8ko-O-k25txJ-6M8TC2PeORiJ1OfAYw/exec", // Google Apps Script Web App URL
   houses: JSON.parse(JSON.stringify(DEFAULT_HOUSES)),
+  draws: [],             // Stores base draft order arrays (e.g. [[0, 2, 1, 3], ...]) for every 4 classes
   selectedStudent: null, // Temporary storage for modal confirm
   isOfflineMode: true,
   isLoading: false
@@ -109,7 +110,23 @@ const DOM = {
   toastIcon: document.getElementById("toast-icon"),
   
   // Confetti
-  confettiCanvas: document.getElementById("confetti-canvas")
+  confettiCanvas: document.getElementById("confetti-canvas"),
+
+  // Unpicked
+  btnUnpicked: document.getElementById("btn-unpicked"),
+  unpickedModal: document.getElementById("unpicked-modal"),
+  unpickedGrid: document.getElementById("unpicked-grid"),
+  unpickedClassName: document.getElementById("unpicked-class-name"),
+
+  // Draw
+  drawModal: document.getElementById("draw-modal"),
+  wheelCanvas: document.getElementById("wheel-canvas"),
+  drawResults: document.getElementById("draw-results"),
+  btnSpinWheel: document.getElementById("btn-spin-wheel"),
+  btnConfirmDraw: document.getElementById("btn-confirm-draw"),
+
+  // Print
+  btnSettingsPrintRosters: document.getElementById("btn-settings-print-rosters")
 };
 
 // Initialize Application
@@ -139,13 +156,19 @@ function setupEventListeners() {
   document.getElementById("btn-settings-reset").addEventListener("click", resetAllData);
   document.getElementById("btn-settings-reset-picks").addEventListener("click", resetOnlyPicks);
   document.getElementById("btn-settings-export-picks").addEventListener("click", exportPicksCsv);
+  DOM.btnSettingsPrintRosters.addEventListener("click", printHouseRosters);
   DOM.btnSettings.addEventListener("click", openSettingsModal);
   
   // Main Header Actions
   DOM.btnUndo.addEventListener("click", undoLastPick);
   DOM.btnFinishClass.addEventListener("click", finishCurrentClass);
   DOM.btnSync.addEventListener("click", syncWithGoogleSheets);
+  DOM.btnUnpicked.addEventListener("click", openUnpickedModal);
   
+  // Draw Actions
+  DOM.btnSpinWheel.addEventListener("click", spinWheel);
+  DOM.btnConfirmDraw.addEventListener("click", confirmDraw);
+
   // CSV Import File Change
   DOM.settingsImportCsv.addEventListener("change", importCsvFile);
   
@@ -163,16 +186,40 @@ function setupEventListeners() {
    ========================================== */
 
 /**
- * Calculates whose turn it is in the active category based on the number of picks already made.
- * @param {number} categoryIdx - The index of the active category
- * @param {number} pickIndexInCat - The index of the pick within the category (0-based)
+ * Gets the global class index (0 to 9) based on active category and class.
+ */
+function getGlobalClassIndex() {
+  let globalIndex = 0;
+  for (let i = 0; i < CATEGORIES.length; i++) {
+    const cat = CATEGORIES[i];
+    if (i < state.activeCategoryIdx) {
+      globalIndex += cat.classes.length;
+    } else if (i === state.activeCategoryIdx) {
+      globalIndex += cat.classes.indexOf(state.activeClass);
+      break;
+    }
+  }
+  return globalIndex;
+}
+
+/**
+ * Calculates whose turn it is in the active class based on the number of picks already made in THIS class.
+ * @param {number} globalClassIdx - The global index of the active class
+ * @param {number} pickIndexInClass - The index of the pick within the class (0-based)
  * @returns {number} The 0-based house index (0 to 3)
  */
-function calculateHouseTurn(categoryIdx, pickIndexInCat) {
-  const cat = CATEGORIES[categoryIdx];
-  const S = cat.startHouseIdx; // Start house: Category 1: 0, Cat 2: 1, Cat 3: 2, Cat 4: 3
+function calculateHouseTurn(globalClassIdx, pickIndexInClass) {
+  const drawBlockIndex = Math.floor(globalClassIdx / 4);
   
-  const r = pickIndexInCat % 8;
+  // If the draw for this block hasn't happened yet, fallback to default order [0,1,2,3] temporarily (UI will block this anyway)
+  let baseOrder = state.draws[drawBlockIndex] || [0, 1, 2, 3];
+  
+  // Shift the base order left by (globalClassIdx % 4)
+  const shiftAmount = globalClassIdx % 4;
+  const shiftedOrder = [...baseOrder.slice(shiftAmount), ...baseOrder.slice(0, shiftAmount)];
+  
+  // Snake Draft Logic: 1, 2, 3, 4, 4, 3, 2, 1
+  const r = pickIndexInClass % 8;
   let offset = 0;
   
   if (r === 0 || r === 7) offset = 0;
@@ -180,26 +227,37 @@ function calculateHouseTurn(categoryIdx, pickIndexInCat) {
   else if (r === 2 || r === 5) offset = 2;
   else if (r === 3 || r === 4) offset = 3;
   
-  return (S + offset) % 4;
+  return shiftedOrder[offset];
 }
 
 /**
- * Gets the list of picks recorded for the current category.
+ * Gets the list of picks recorded for the current class.
  */
-function getPicksInActiveCategory() {
-  const activeCat = CATEGORIES[state.activeCategoryIdx];
-  // Since student category values in sheet could vary slightly in case, we do lowercase comparison
-  return state.picks.filter(p => p.category.trim().toLowerCase() === activeCat.name.trim().toLowerCase());
+function getPicksInActiveClass() {
+  return state.picks.filter(p => p.class.trim().toUpperCase() === state.activeClass.toUpperCase());
 }
 
 /**
  * Updates the turn display banner and the upcoming turn queue.
  */
 function updateTurnDisplay() {
-  const picksInCat = getPicksInActiveCategory();
-  const pickIndex = picksInCat.length;
+  const globalClassIdx = getGlobalClassIndex();
+  const drawBlockIndex = Math.floor(globalClassIdx / 4);
   
-  const activeHouseIdx = calculateHouseTurn(state.activeCategoryIdx, pickIndex);
+  // If the draw for this block hasn't happened, prompt it
+  if (!state.draws[drawBlockIndex]) {
+    DOM.currentHouseName.textContent = "Draw Pending";
+    DOM.currentHouseColor.style.backgroundColor = "transparent";
+    DOM.currentHouseBanner.className = "current-house-banner";
+    DOM.upcomingQueue.innerHTML = `<div class="queue-item" style="color: var(--text-muted); justify-content: center;">Please spin the wheel for House Draw.</div>`;
+    openDrawModal(drawBlockIndex);
+    return;
+  }
+
+  const picksInClass = getPicksInActiveClass();
+  const pickIndex = picksInClass.length;
+  
+  const activeHouseIdx = calculateHouseTurn(globalClassIdx, pickIndex);
   const activeHouse = state.houses[activeHouseIdx];
   
   // Update main turn banner
@@ -215,7 +273,7 @@ function updateTurnDisplay() {
   // Generate upcoming draft order (Next 4 turns)
   DOM.upcomingQueue.innerHTML = "";
   for (let i = 1; i <= 4; i++) {
-    const nextHouseIdx = calculateHouseTurn(state.activeCategoryIdx, pickIndex + i);
+    const nextHouseIdx = calculateHouseTurn(globalClassIdx, pickIndex + i);
     const nextHouse = state.houses[nextHouseIdx];
     
     const div = document.createElement("div");
@@ -239,7 +297,8 @@ function saveStateToLocalStorage() {
     activeCategoryIdx: state.activeCategoryIdx,
     activeClass: state.activeClass,
     apiURL: state.apiURL,
-    houses: state.houses
+    houses: state.houses,
+    draws: state.draws
   }));
 }
 
@@ -254,6 +313,7 @@ function loadStateFromLocalStorage() {
       state.activeClass = data.activeClass || "D3";
       state.apiURL = data.apiURL || "https://script.google.com/macros/s/AKfycbyCpEuuJN9GLbT1dbRlsK1Avouauv6h3SYUNOt8ko-O-k25txJ-6M8TC2PeORiJ1OfAYw/exec";
       state.houses = data.houses || JSON.parse(JSON.stringify(DEFAULT_HOUSES));
+      state.draws = data.draws || [];
       
       // Update form values
       DOM.settingsApiUrl.value = state.apiURL;
@@ -599,8 +659,15 @@ function openStudentPreview(student) {
   state.selectedStudent = student;
   
   // Get active turn details
-  const picksInCat = getPicksInActiveCategory();
-  const activeHouseIdx = calculateHouseTurn(state.activeCategoryIdx, picksInCat.length);
+  const globalClassIdx = getGlobalClassIndex();
+  const drawBlockIndex = Math.floor(globalClassIdx / 4);
+  if (!state.draws[drawBlockIndex]) {
+    showToast("Please complete the House Draw first.", "error");
+    return;
+  }
+  
+  const picksInClass = getPicksInActiveClass();
+  const activeHouseIdx = calculateHouseTurn(globalClassIdx, picksInClass.length);
   const activeHouse = state.houses[activeHouseIdx];
   
   // Populate image
@@ -646,10 +713,11 @@ async function confirmStudentSelection() {
   if (!state.selectedStudent) return;
   
   const student = state.selectedStudent;
-  const picksInCat = getPicksInActiveCategory();
-  const pickIndex = picksInCat.length; // Index within category
+  const globalClassIdx = getGlobalClassIndex();
+  const picksInClass = getPicksInActiveClass();
+  const pickIndex = picksInClass.length; // Index within class
   
-  const activeHouseIdx = calculateHouseTurn(state.activeCategoryIdx, pickIndex);
+  const activeHouseIdx = calculateHouseTurn(globalClassIdx, pickIndex);
   const activeHouse = state.houses[activeHouseIdx];
   
   // Construct pick payload
@@ -798,6 +866,7 @@ function resetAllData() {
       activeClass: "D3",
       apiURL: "",
       houses: JSON.parse(JSON.stringify(DEFAULT_HOUSES)),
+      draws: [],
       selectedStudent: null,
       isOfflineMode: true,
       isLoading: false
@@ -1082,3 +1151,301 @@ window.addEventListener("resize", () => {
     DOM.confettiCanvas.height = window.innerHeight;
   }
 });
+
+/* ==========================================
+   UNPICKED STUDENTS LOGIC
+   ========================================== */
+
+function openUnpickedModal() {
+  DOM.unpickedGrid.innerHTML = "";
+  const activeCat = CATEGORIES[state.activeCategoryIdx];
+  DOM.unpickedClassName.textContent = activeCat.name;
+  
+  const categoryFiltered = state.students.filter(s => s.category.trim().toLowerCase() === activeCat.name.trim().toLowerCase());
+  
+  // Find unpicked
+  const unpicked = categoryFiltered.filter(s => {
+    return !state.picks.some(p => p.admissionNo.trim() === s.admissionNo.trim());
+  });
+  
+  if (unpicked.length === 0) {
+    DOM.unpickedGrid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px;">All students in this category have been drafted!</div>`;
+  } else {
+    unpicked.forEach(student => {
+      let imgUrl = "";
+      if (student.photoFileId) {
+        imgUrl = `https://drive.google.com/thumbnail?id=${student.photoFileId.trim()}&sz=w400`;
+      }
+      
+      const card = document.createElement("li");
+      card.className = "student-card";
+      card.innerHTML = `
+        <div class="student-photo-container">
+          ${imgUrl ? 
+            `<img class="student-photo" src="${imgUrl}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">` : 
+            ''
+          }
+          <div class="student-photo-fallback" style="display: ${imgUrl ? 'none' : 'flex'}">
+            ${ISLAMIC_AVATAR_SVG}
+          </div>
+        </div>
+        <div class="student-card-info">
+          <div class="student-name">${student.studentName}</div>
+          <div class="student-adm">Adm: ${student.admissionNo}</div>
+        </div>
+      `;
+      DOM.unpickedGrid.appendChild(card);
+    });
+  }
+  
+  openModal(DOM.unpickedModal);
+}
+
+/* ==========================================
+   DRAW LOGIC (SPINNING WHEEL)
+   ========================================== */
+
+let pendingDrawBlock = -1;
+let drawnOrder = [];
+let wheelSpinning = false;
+let availableHouses = [];
+
+function openDrawModal(blockIndex) {
+  pendingDrawBlock = blockIndex;
+  drawnOrder = [];
+  availableHouses = [0, 1, 2, 3];
+  wheelSpinning = false;
+  
+  DOM.drawResults.innerHTML = "";
+  DOM.btnSpinWheel.style.display = "block";
+  DOM.btnConfirmDraw.style.display = "none";
+  DOM.btnSpinWheel.disabled = false;
+  
+  drawWheel(0);
+  openModal(DOM.drawModal);
+}
+
+function drawWheel(angleOffset) {
+  const canvas = DOM.wheelCanvas;
+  const ctx = canvas.getContext("2d");
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const radius = cx - 10;
+  
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  if (availableHouses.length === 0) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+    ctx.fillStyle = "#e2e8f0";
+    ctx.fill();
+    ctx.fillStyle = "#64748b";
+    ctx.font = "bold 24px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Draw Complete", cx, cy);
+    
+    // Center peg
+    ctx.beginPath();
+    ctx.arc(cx, cy, 15, 0, 2 * Math.PI);
+    ctx.fillStyle = "#1e293b";
+    ctx.fill();
+    return;
+  }
+  
+  const sliceAngle = (2 * Math.PI) / availableHouses.length;
+  
+  for (let i = 0; i < availableHouses.length; i++) {
+    const houseIdx = availableHouses[i];
+    const house = state.houses[houseIdx];
+    const startAngle = angleOffset + i * sliceAngle;
+    const endAngle = startAngle + sliceAngle;
+    
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, radius, startAngle, endAngle);
+    ctx.closePath();
+    ctx.fillStyle = house.color;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#ffffff";
+    ctx.stroke();
+    
+    // Draw text
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(startAngle + sliceAngle / 2);
+    ctx.textAlign = "right";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillText(house.name, radius - 20, 5);
+    ctx.restore();
+  }
+  
+  // Center peg
+  ctx.beginPath();
+  ctx.arc(cx, cy, 15, 0, 2 * Math.PI);
+  ctx.fillStyle = "#1e293b";
+  ctx.fill();
+}
+
+function spinWheel() {
+  if (wheelSpinning || availableHouses.length === 0) return;
+  wheelSpinning = true;
+  DOM.btnSpinWheel.disabled = true;
+  
+  let currentAngle = 0;
+  // Random speed and duration
+  let spinSpeed = Math.random() * 0.2 + 0.3; // rad per frame
+  const deceleration = 0.985;
+  
+  function animate() {
+    currentAngle += spinSpeed;
+    drawWheel(currentAngle);
+    
+    spinSpeed *= deceleration;
+    
+    if (spinSpeed > 0.002) {
+      requestAnimationFrame(animate);
+    } else {
+      wheelSpinning = false;
+      DOM.btnSpinWheel.disabled = false;
+      
+      // Determine winner (top is -PI/2)
+      const normalizedAngle = currentAngle % (2 * Math.PI);
+      const pointerAngle = (Math.PI * 1.5 - normalizedAngle + 2 * Math.PI) % (2 * Math.PI);
+      
+      const sliceAngle = (2 * Math.PI) / availableHouses.length;
+      const winningIndex = Math.floor(pointerAngle / sliceAngle);
+      
+      const winnerHouseIdx = availableHouses[winningIndex];
+      const winnerHouse = state.houses[winnerHouseIdx];
+      
+      drawnOrder.push(winnerHouseIdx);
+      availableHouses.splice(winningIndex, 1);
+      
+      // Update UI
+      const badge = document.createElement("div");
+      badge.className = "meta-badge";
+      badge.style.backgroundColor = winnerHouse.color;
+      badge.style.color = "#fff";
+      badge.style.fontSize = "1rem";
+      badge.style.padding = "8px 12px";
+      badge.textContent = `${drawnOrder.length}. ${winnerHouse.name}`;
+      DOM.drawResults.appendChild(badge);
+      
+      drawWheel(0);
+      
+      if (availableHouses.length === 0) {
+        DOM.btnSpinWheel.style.display = "none";
+        DOM.btnConfirmDraw.style.display = "block";
+      }
+    }
+  }
+  
+  requestAnimationFrame(animate);
+}
+
+function confirmDraw() {
+  if (drawnOrder.length !== 4) return;
+  
+  state.draws[pendingDrawBlock] = [...drawnOrder];
+  saveStateToLocalStorage();
+  
+  closeModal(DOM.drawModal);
+  showToast("Draw completed! Order saved.", "success");
+  renderAll();
+}
+
+/* ==========================================
+   PRINTABLE HOUSE ROSTERS
+   ========================================== */
+
+function printHouseRosters() {
+  if (state.picks.length === 0) {
+    showToast("No picks recorded to print.", "error");
+    return;
+  }
+  
+  const printWindow = window.open("", "_blank");
+  
+  let html = `
+    <html>
+    <head>
+      <title>House Rosters - Arts Fest Live Auction</title>
+      <style>
+        body { font-family: sans-serif; padding: 20px; color: #1e293b; max-width: 1000px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 30px; font-size: 24px; text-transform: uppercase; letter-spacing: 2px; }
+        .house-section { page-break-after: always; margin-bottom: 40px; }
+        .house-header { display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid; padding-bottom: 10px; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { border: 1px solid #cbd5e1; padding: 10px 15px; text-align: left; }
+        th { background: #f1f5f9; text-transform: uppercase; font-size: 12px; color: #64748b; }
+        .count { font-size: 1.2rem; font-weight: bold; }
+        @media print {
+          .house-section { page-break-inside: avoid; }
+        }
+      </style>
+    </head>
+    <body>
+      <h1>Arts Fest Live Auction - House Rosters</h1>
+  `;
+  
+  state.houses.forEach(house => {
+    const housePicks = state.picks.filter(p => p.house === house.name);
+    
+    html += `
+      <div class="house-section">
+        <div class="house-header" style="border-color: ${house.color};">
+          <h2 style="color: ${house.color}; margin: 0; font-size: 22px;">${house.name}</h2>
+          <span class="count" style="color: ${house.color};">Total: ${housePicks.length}</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 8%;">#</th>
+              <th style="width: 35%;">Name</th>
+              <th style="width: 17%;">Admission No</th>
+              <th style="width: 20%;">Class</th>
+              <th style="width: 20%;">Category</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+    
+    if (housePicks.length === 0) {
+      html += `<tr><td colspan="5" style="text-align: center; padding: 20px; font-style: italic; color: #94a3b8;">No students picked yet.</td></tr>`;
+    } else {
+      housePicks.forEach((p, idx) => {
+        html += `
+          <tr>
+            <td>${idx + 1}</td>
+            <td><strong>${p.studentName}</strong></td>
+            <td>${p.admissionNo}</td>
+            <td>${p.class}</td>
+            <td>${p.category}</td>
+          </tr>
+        `;
+      });
+    }
+    
+    html += `
+          </tbody>
+        </table>
+      </div>
+    `;
+  });
+  
+  html += `
+    </body>
+    </html>
+  `;
+  
+  printWindow.document.write(html);
+  printWindow.document.close();
+  
+  // Wait a moment for styles to apply before printing
+  setTimeout(() => {
+    printWindow.print();
+  }, 500);
+}
